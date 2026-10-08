@@ -36,21 +36,23 @@ Android 通常不提供每个线程的真实功耗接口。当前代码中的 `p
 ## 目录结构
 
 ```text
-native/
-├── CMakeLists.txt
-├── include/
-│   ├── config.h
-│   ├── cpu_binder.h
-│   ├── model.h
-│   ├── proc_reader.h
-│   └── sampler.h
-└── src/
-    ├── config.cpp
-    ├── cpu_binder.cpp
-    ├── main.cpp
-    ├── proc_reader.cpp
-    └── sampler.cpp
+native/                         # C++ native daemon 工程
+├── CMakeLists.txt              # CMake 构建配置、编译选项和 Android log 库链接
+├── include/                    # 公共头文件和数据结构声明
+│   ├── config.h                # 配置加载器接口和规则集合
+│   ├── cpu_binder.h            # CPU affinity 绑定接口
+│   ├── model.h                 # 规则、线程信息和采样记录的数据模型
+│   ├── proc_reader.h           # /proc 进程与线程信息读取接口
+│   └── sampler.h               # CPU 时间、频率采样和 JSONL 输出接口
+└── src/                        # C++ 实现文件
+    ├── config.cpp              # 解析 JSON 规则中的包名、进程、线程和 CPU 列表
+    ├── cpu_binder.cpp          # 构造 cpu_set_t 并调用 sched_setaffinity
+    ├── main.cpp                # daemon 入口、主循环和规则调度
+    ├── proc_reader.cpp         # 扫描 /proc、枚举 PID/TID 并读取线程 stat/comm
+    └── sampler.cpp             # 读取核心频率、计算 CPU 时间增量并追加 JSONL
 ```
+
+数据流为：`main.cpp` 加载 `config.cpp` 的规则，`proc_reader.cpp` 发现目标线程，`cpu_binder.cpp` 执行绑核，`sampler.cpp` 记录采样结果；`model.h` 在各模块之间传递统一的数据结构。
 
 ## 配置
 
