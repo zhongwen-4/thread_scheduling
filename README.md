@@ -102,6 +102,8 @@ native/
 
 项目使用 CMake 和 C++17。Android 构建需要 Android NDK；Linux 构建需要 Linux CMake 工具链。
 
+仓库包含 GitHub Actions 工作流 [`build.yml`](.github/workflows/build.yml)。它会在 `main` 推送、Pull Request 或手动触发时构建 Android `arm64-v8a` 版本，并上传 `threadschedd-android-arm64` artifact。artifact 内包含二进制文件和 `SHA256SUMS`。
+
 ```bash
 cmake -S native -B native/build -DCMAKE_BUILD_TYPE=Release
 cmake --build native/build --target threadschedd -j
