@@ -1,16 +1,13 @@
 #include "proc_reader.h"
 
-#include <algorithm>
 #include <cstdlib>
-#include <cerrno>
-#include <cstring>
 #include <dirent.h>
 #include <fstream>
 #include <sstream>
+#include <utility>
 #include <unistd.h>
 
 namespace thread_sched {
-
 namespace {
 
 bool IsNumber(const char* value) {
@@ -19,43 +16,32 @@ bool IsNumber(const char* value) {
     return true;
 }
 
+std::string ProcessName(const std::string& cmdline) {
+    return cmdline.substr(0, cmdline.find(':'));
+}
+
 bool Matches(const ThreadInfo& thread, const Rule& rule) {
-    if (rule.uid >= 0 && thread.uid != rule.uid) return false;
     if (!rule.package_name.empty() && thread.package_name != rule.package_name) return false;
-    if (!rule.process_name.empty() && thread.process_name != rule.process_name) return false;
-    if (!rule.thread_name.empty() && thread.thread_name != rule.thread_name) return false;
-    return true;
+    return rule.thread_name == "*" || thread.thread_name == rule.thread_name;
 }
 
 }  // namespace
 
-ProcReader::ProcReader(long clock_ticks_per_second) : clock_ticks_per_second_(clock_ticks_per_second) {}
+ProcReader::ProcReader(std::string proc_root) : proc_root_(std::move(proc_root)) {}
 
 std::string ProcReader::ReadTrimmed(const std::string& path) {
-    std::ifstream input(path);
+    std::ifstream input(path, std::ios::binary);
     if (!input) return {};
-    std::string value;
-    std::getline(input, value);
+    std::string value((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
+    const std::size_t nul = value.find('\0');
+    if (nul != std::string::npos) value.resize(nul);
     while (!value.empty() && (value.back() == '\n' || value.back() == '\r' || value.back() == ' ')) value.pop_back();
     return value;
 }
 
-std::vector<int> ProcReader::FindPids(const Rule& rule) const {
-    std::vector<int> pids;
-    DIR* dir = opendir("/proc");
-    if (!dir) return pids;
-    while (dirent* entry = readdir(dir)) {
-        if (!IsNumber(entry->d_name)) continue;
-        const int pid = std::atoi(entry->d_name);
-        ThreadInfo main_thread;
-        if (ReadThread(pid, pid, &main_thread) && Matches(main_thread, rule)) pids.push_back(pid);
-    }
-    closedir(dir);
-    return pids;
-}
-
 bool ProcReader::ReadThread(int pid, int tid, ThreadInfo* output) const {
-    const std::string base = "/proc/" + std::to_string(pid) + "/task/" + std::to_string(tid);
+    const std::string process = proc_root_ + "/" + std::to_string(pid);
+    const std::string base = process + "/task/" + std::to_string(tid);
     std::ifstream stat(base + "/stat");
     if (!stat) return false;
     std::string line;
@@ -64,13 +50,14 @@ bool ProcReader::ReadThread(int pid, int tid, ThreadInfo* output) const {
     if (close == std::string::npos) return false;
     std::istringstream fields(line.substr(close + 2));
     char state = 0;
-    std::uint64_t utime = 0, stime = 0;
+    std::uint64_t utime = 0, stime = 0, start_time = 0;
     int processor = -1;
     fields >> state;
     std::string ignored;
     for (int index = 4; index <= 39; ++index) {
         if (index == 14) fields >> utime;
         else if (index == 15) fields >> stime;
+        else if (index == 22) fields >> start_time;
         else if (index == 39) fields >> processor;
         else fields >> ignored;
         if (!fields) return false;
@@ -78,18 +65,44 @@ bool ProcReader::ReadThread(int pid, int tid, ThreadInfo* output) const {
     output->pid = pid;
     output->tid = tid;
     output->thread_name = ReadTrimmed(base + "/comm");
-    output->process_name = ReadTrimmed("/proc/" + std::to_string(pid) + "/cmdline");
-    output->package_name = output->process_name;
+    output->process_name = ReadTrimmed(process + "/cmdline");
+    output->package_name = ProcessName(output->process_name);
     output->utime_ticks = utime;
     output->stime_ticks = stime;
+    output->start_time_ticks = start_time;
     output->processor = processor;
+    std::ifstream status(base + "/status");
+    while (std::getline(status, line)) {
+        if (line.rfind("Uid:", 0) == 0) {
+            std::istringstream(line.substr(4)) >> output->uid;
+            break;
+        }
+    }
     return true;
+}
+
+bool ProcReader::ReadThreadById(int pid, int tid, ThreadInfo* output) const {
+    return ReadThread(pid, tid, output);
+}
+
+std::vector<int> ProcReader::FindPids(const Rule& rule) const {
+    std::vector<int> pids;
+    DIR* dir = opendir(proc_root_.c_str());
+    if (!dir) return pids;
+    while (dirent* entry = readdir(dir)) {
+        if (!IsNumber(entry->d_name)) continue;
+        const int pid = std::atoi(entry->d_name);
+        ThreadInfo main_thread;
+        if (ReadThread(pid, pid, &main_thread) && main_thread.package_name == rule.package_name) pids.push_back(pid);
+    }
+    closedir(dir);
+    return pids;
 }
 
 std::vector<ThreadInfo> ProcReader::ReadThreads(const Rule& rule) const {
     std::vector<ThreadInfo> result;
     for (const int pid : FindPids(rule)) {
-        const std::string path = "/proc/" + std::to_string(pid) + "/task";
+        const std::string path = proc_root_ + "/" + std::to_string(pid) + "/task";
         DIR* dir = opendir(path.c_str());
         if (!dir) continue;
         while (dirent* entry = readdir(dir)) {

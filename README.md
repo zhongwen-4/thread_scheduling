@@ -6,18 +6,18 @@ Thread Scheduling 是一个面向 Android Root 环境的线程 CPU 亲和性管�
 
 ## 功能
 
-- 按包名、UID、进程名和线程名匹配规则。
+- 按 `applist.json` 中的包名和线程名匹配规则。
 - 使用 `sched_setaffinity` 设置线程允许运行的 CPU 核心集合。
 - 周期性扫描 `/proc/<pid>/task`，发现应用新线程。
 - 记录线程 CPU 时间增量、最近运行的 CPU、当前核心频率和绑定结果。
 - 将采样结果追加写入 JSONL 文件。
-- 支持 `enforce` 和 `once` 两种绑定模式配置字段。
+- 支持 `scan`、`single` 和 `event_driven` 三种绑定模式。
 
 ## 重要限制
 
 ### 功耗不是线程级实测值
 
-Android 通常不提供每个线程的真实功耗接口。当前代码中的 `power_estimate_uw` 只是基于 CPU 时间增量和频率的占位估算，不代表物理测量值，也不能跨设备比较。
+Android 通常不提供每个线程的真实功耗接口。当前版本没有接入设备能耗计数器，因此 `power_source` 为 `unavailable`，`power_estimate_uw` 为 `null`，不会伪造功耗数值。
 
 要得到可解释的功耗数据，需要针对目标 SoC 接入 per-core/per-cluster energy counter，并建立校准模型。只有整机或电源轨计数器时，只能报告设备级或电源轨级数据，不能归因给单个线程。
 
@@ -30,23 +30,31 @@ Android 通常不提供每个线程的真实功耗接口。当前代码中的 `p
 - 配置热加载和控制 socket
 - `threadschedctl` CLI
 - SQLite 存储和查询界面
-- 完整的 Android 包名与 UID 解析
+- Android PackageManager 级别的包名解析；当前通过 `/proc` 进程命令行匹配包名
 - 设备级功耗计数器适配
 
 ## 目录结构
 
 ```text
+applist.json                    # 应用/线程绑核规则示例
 native/                         # C++ native daemon 工程
 ├── CMakeLists.txt              # CMake 构建配置、编译选项和 Android log 库链接
+├── third_party/nlohmann/       # MIT 许可的单头文件 JSON 解析库
+│   ├── json.hpp                # nlohmann::json 单头文件实现
+│   └── LICENSE.MIT             # 第三方库许可证
 ├── include/                    # 公共头文件和数据结构声明
 │   ├── config.h                # 配置加载器接口和规则集合
+│   ├── core_topology.h         # CPU 性能簇自动识别和核心选择解析
 │   ├── cpu_binder.h            # CPU affinity 绑定接口
+│   ├── event_watcher.h         # proc connector 事件监听接口
 │   ├── model.h                 # 规则、线程信息和采样记录的数据模型
 │   ├── proc_reader.h           # /proc 进程与线程信息读取接口
 │   └── sampler.h               # CPU 时间、频率采样和 JSONL 输出接口
 └── src/                        # C++ 实现文件
-    ├── config.cpp              # 解析 JSON 规则中的包名、进程、线程和 CPU 列表
+    ├── config.cpp              # 解析 applist.json 中的包名、线程、核心选择和模式
+    ├── core_topology.cpp       # 读取 CPU capacity/最大频率并映射 e/p/hp-core
     ├── cpu_binder.cpp          # 构造 cpu_set_t 并调用 sched_setaffinity
+    ├── event_watcher.cpp       # 监听线程/进程创建事件并提供降级状态
     ├── main.cpp                # daemon 入口、主循环和规则调度
     ├── proc_reader.cpp         # 扫描 /proc、枚举 PID/TID 并读取线程 stat/comm
     └── sampler.cpp             # 读取核心频率、计算 CPU 时间增量并追加 JSONL
@@ -56,17 +64,15 @@ native/                         # C++ native daemon 工程
 
 ## 配置
 
-守护进程读取一个包含规则对象的 JSON 文件。当前解析器支持以下字段：
+守护进程读取独立的 `applist.json`。顶层键是 Android 包名，每个包对应一个规则对象。对象键使用英文：
 
 ```json
 {
-  "package": "com.example.app",
-  "uid": 10234,
-  "process": "com.example.app:worker",
-  "thread_name": "RenderThread",
-  "cpus": [4, 5],
-  "mode": "enforce",
-  "sample_ms": 1000
+  "com.example.app": {
+    "thread_name": "RenderThread",
+    "cpu_cores": ["0-6", "e-core", "p-core", "hp-core", 7],
+    "sample_interval_ms": 1000
+  }
 }
 ```
 
@@ -74,31 +80,21 @@ native/                         # C++ native daemon 工程
 
 | 字段 | 说明 |
 | --- | --- |
-| `package` | 目标包名。当前原型通过进程命令行近似匹配，不能替代 Android PackageManager 查询。 |
-| `uid` | 目标 UID。当前线程读取路径尚未填充 UID，不能单独依赖该字段。 |
-| `process` | 进程命令行匹配值。 |
-| `thread_name` | `/proc/<pid>/task/<tid>/comm` 中的线程名。 |
-| `cpus` | 要绑定的 CPU 编号列表。 |
-| `mode` | `enforce` 表示周期性设置；`once` 表示配置字段语义上的一次性模式。当前主循环仍会扫描规则。 |
-| `sample_ms` | 采样间隔，最小实际休眠间隔为 50 ms。 |
+| 顶层包名 | 目标 Android 包名，例如 `com.example.app`。daemon 根据 `/proc` 进程命令行匹配包名。 |
+| `thread_name` | `/proc/<pid>/task/<tid>/comm` 中的线程名；使用 `*` 匹配该包的所有线程。 |
+| `cpu_cores` | 数字或数字字符串表示单个核心；`"0-6"` 表示范围；`"e-core"`、`"p-core"`、`"hp-core"` 表示自动识别的核心组；数组元素可以混合，最终取并集。 |
+| `sample_interval_ms` | 采样间隔，范围为 50 到 60000 毫秒。 |
+| `mode` | 可选，`scan`、`single` 或 `event_driven`；省略时默认为 `scan`。 |
 
-可以将多个规则写入数组；当前解析器按 JSON 文本中的对象逐个读取：
+核心类别通过 sysfs 自动识别：优先使用每个 CPU 的 `cpu_capacity`，缺失时使用 `cpuinfo_max_freq`。最低 capacity 组是 `e-core`，最高组是 `hp-core`，中间组是 `p-core`；只有两组的设备没有 `p-core`。如果设备没有可读取的拓扑数据，使用类别别名会报错，数字和范围仍可使用。
 
-```json
-[
-  {
-    "package": "com.example.app",
-    "thread_name": "RenderThread",
-    "cpus": [4, 5],
-    "sample_ms": 1000
-  },
-  {
-    "process": "com.example.app:worker",
-    "cpus": [6, 7],
-    "sample_ms": 500
-  }
-]
-```
+### 模式
+
+- `scan`：每个 `sample_interval_ms` 周期扫描匹配线程并重新设置 affinity。适合应用可能主动修改 affinity 或持续创建线程的场景。
+- `single`：daemon 启动时扫描一次并绑定当时存在的匹配线程；后续只记录这些线程，不绑定新线程。
+- `event_driven`：通过 Linux proc connector 的进程/线程创建事件触发扫描和绑定；事件接口不可用或异常时，每 5 秒扫描兜底。采样仍按 `sample_interval_ms` 进行。
+
+事件驱动依赖目标内核启用 proc connector，Android 厂商内核可能未启用。daemon 会在日志中报告降级状态，不会把降级伪装成纯事件驱动。
 
 ## 构建
 
@@ -128,7 +124,7 @@ cmake --build native/build --target threadschedd -j
 `threadschedd` 的命令行格式：
 
 ```text
-threadschedd <config.json> <samples.jsonl>
+threadschedd <applist.json> <samples.jsonl>
 ```
 
 在 Android Root shell 中示例：
@@ -136,7 +132,7 @@ threadschedd <config.json> <samples.jsonl>
 ```sh
 su
 /data/adb/thread-scheduling/threadschedd \
-  /data/adb/thread-scheduling/config.json \
+  /data/adb/thread-scheduling/applist.json \
   /data/adb/thread-scheduling/samples.jsonl
 ```
 
@@ -156,12 +152,12 @@ daemon 会持续运行，使用 `Ctrl-C` 或发送终止信号停止。跨 UID �
   "delta_cpu_time_ns": 12000000,
   "frequency_hz": 1800000000,
   "binding_result": "ok",
-  "power_source": "estimated",
-  "power_estimate_uw": 21600000
+  "power_source": "unavailable",
+  "power_estimate_uw": null
 }
 ```
 
-`cpu` 是 `/proc/<pid>/task/<tid>/stat` 报告的最近运行 CPU，不表示整个采样窗口只运行在该核心。`binding_result` 为 `ok` 或带 errno 信息的 `error:<reason>`。
+`cpu` 是 `/proc/<pid>/task/<tid>/stat` 报告的最近运行 CPU，不表示整个采样窗口只运行在该核心。`binding_result` 为 `ok`、`not_requested` 或带 errno 信息的 `error:<reason>`。
 
 ## 后续模块化工作
 

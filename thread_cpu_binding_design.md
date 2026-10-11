@@ -38,28 +38,24 @@ Root 模块
 
 ## 配置模型
 
-建议每条规则包含：
+应用规则独立放在 `applist.json`，包名作为顶层键，每个包对应一个规则对象：
 
 ```json
 {
-  "package": "com.example.app",
-  "uid": 10234,
-  "process": "com.example.app:worker",
   "thread_name": "RenderThread",
-  "cpus": [4, 5],
-  "mode": "enforce",
-  "sample_ms": 1000
+  "cpu_cores": ["p-core", "4-6", 7],
+  "sample_interval_ms": 1000
 }
 ```
 
-匹配优先级：`uid + process + thread_name` > `package + process` > `uid` > `package`。同一线程命中多条规则时使用最具体的一条。`mode=enforce` 表示周期性纠正 affinity，`mode=once` 只在发现线程时设置一次。
+`cpu_cores` 支持数字、数字字符串、数字范围和 `e-core`、`p-core`、`hp-core`，数组元素取并集。`mode` 可选，省略时使用 `scan`；`scan` 按采样间隔重新绑定，`single` 只绑定 daemon 启动时的线程快照，`event_driven` 由 proc connector 事件触发并以 5 秒扫描兜底。核心组根据 sysfs CPU capacity 或最大频率自动分组。
 
 ## 线程发现与绑定
 
 1. 读取配置并校验 CPU 编号是否在线。
 2. 通过 `/proc` 扫描目标 PID，再扫描 `/proc/PID/task/TID/comm` 和 `cmdline`。
 3. 对匹配线程调用 `sched_setaffinity(tid, sizeof(cpu_set_t), &mask)`。
-4. 新线程会继承创建者的 affinity，但应用可能主动改回，因此 `enforce` 模式需要周期性复查。
+4. 新线程会继承创建者的 affinity，但应用可能主动改回，因此 `scan` 模式需要周期性复查；`event_driven` 模式用创建事件触发，并保留低频扫描兜底。
 5. PID 复用时必须同时校验 `/proc/PID/cmdline`、UID 和进程启动时间，避免把规则应用到错误进程。
 
 绑定失败要记录 errno、线程身份和目标 CPU，不得静默忽略。线程结束、进程退出和规则删除时清理内存状态。
@@ -78,7 +74,7 @@ freq_before_hz, freq_after_hz
 affinity_mask
 binding_result
 power_estimate_uw
-power_source = estimated_cpu_model | rail_counter | unavailable
+power_source = measured_cpu_counter | unavailable
 ```
 
 `/proc/PID/task/TID/stat` 的 CPU 时间使用系统 `_SC_CLK_TCK` 换算为纳秒；processor 字段只表示最近一次运行的 CPU，不代表整个采样窗口只在该 CPU 上运行，因此需要记录前后值并结合 affinity 解读。
@@ -89,9 +85,9 @@ power_source = estimated_cpu_model | rail_counter | unavailable
 
 1. 设备暴露 per-core 或 per-cluster energy counter 时，使用增量计数器。
 2. 只有电源轨/整机计数器时，只记录 rail/device 级别，不能伪造线程级功耗。
-3. 没有计数器时，用校准模型估算：`energy ~= cpu_time * f(freq, core_type, voltage, calibration)`。
+3. 没有计数器时不输出线程级功耗数值，标记为 `unavailable`；接入校准模型后再增加 `estimated` 状态。
 
-输出必须区分 `measured` 和 `estimated`。默认不把估算瓦特数展示成测量值，也不跨设备比较未校准的数值。
+输出必须区分 `measured`、`estimated` 和 `unavailable`。当前实现只输出 `unavailable`，避免把没有物理依据的数值展示成测量结果。
 
 ## 权限与安全
 

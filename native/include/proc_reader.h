@@ -9,12 +9,13 @@ namespace thread_sched {
 
 class ProcReader {
 public:
-    explicit ProcReader(long clock_ticks_per_second);
+    explicit ProcReader(std::string proc_root = "/proc");
     std::vector<ThreadInfo> ReadThreads(const Rule& rule) const;
+    bool ReadThreadById(int pid, int tid, ThreadInfo* output) const;
     static std::string ReadTrimmed(const std::string& path);
 
 private:
-    long clock_ticks_per_second_;
+    std::string proc_root_;
     std::vector<int> FindPids(const Rule& rule) const;
     bool ReadThread(int pid, int tid, ThreadInfo* output) const;
 };

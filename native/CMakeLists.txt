@@ -10,10 +10,15 @@ add_executable(threadschedd
     src/config.cpp
     src/proc_reader.cpp
     src/cpu_binder.cpp
+    src/core_topology.cpp
+    src/event_watcher.cpp
     src/sampler.cpp
 )
 
-target_include_directories(threadschedd PRIVATE include)
+target_include_directories(threadschedd PRIVATE
+    include
+    third_party
+)
 target_compile_options(threadschedd PRIVATE -Wall -Wextra -Wpedantic)
 
 if (ANDROID)

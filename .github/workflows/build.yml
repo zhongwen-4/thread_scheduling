@@ -5,10 +5,12 @@ on:
     branches: [main]
     paths:
       - "native/**"
+      - "applist.json"
       - ".github/workflows/build.yml"
   pull_request:
     paths:
       - "native/**"
+      - "applist.json"
       - ".github/workflows/build.yml"
   workflow_dispatch:
 
