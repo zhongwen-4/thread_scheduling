@@ -43,12 +43,12 @@ Root 模块
 ```json
 {
   "thread_name": "RenderThread",
-  "cpu_cores": ["p-core", "4-6", 7],
+  "cpu_cores": ["all"],
   "sample_interval_ms": 1000
 }
 ```
 
-`cpu_cores` 支持数字、数字字符串、数字范围和 `e-core`、`p-core`、`hp-core`，数组元素取并集。`mode` 可选，省略时使用 `scan`；`scan` 按采样间隔重新绑定，`single` 只绑定 daemon 启动时的线程快照，`event_driven` 由 proc connector 事件触发并以 5 秒扫描兜底。核心组根据 sysfs CPU capacity 或最大频率自动分组。
+`cpu_cores` 支持数字、数字字符串、数字范围、`all` 和 `e-core`、`p-core`、`hp-core`，数组元素取并集。`all` 表示当前在线的全部核心，不依赖大小核拓扑识别。`mode` 可选，省略时使用 `scan`；`scan` 按采样间隔重新绑定，`single` 只绑定 daemon 启动时的线程快照，`event_driven` 由 proc connector 事件触发并以 5 秒扫描兜底。核心组根据 sysfs CPU capacity 或最大频率自动分组。
 
 ## 线程发现与绑定
 

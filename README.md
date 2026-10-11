@@ -70,7 +70,7 @@ native/                         # C++ native daemon 工程
 {
   "com.example.app": {
     "thread_name": "RenderThread",
-    "cpu_cores": ["0-6", "e-core", "p-core", "hp-core", 7],
+    "cpu_cores": ["all"],
     "sample_interval_ms": 1000
   }
 }
@@ -82,11 +82,11 @@ native/                         # C++ native daemon 工程
 | --- | --- |
 | 顶层包名 | 目标 Android 包名，例如 `com.example.app`。daemon 根据 `/proc` 进程命令行匹配包名。 |
 | `thread_name` | `/proc/<pid>/task/<tid>/comm` 中的线程名；使用 `*` 匹配该包的所有线程。 |
-| `cpu_cores` | 数字或数字字符串表示单个核心；`"0-6"` 表示范围；`"e-core"`、`"p-core"`、`"hp-core"` 表示自动识别的核心组；数组元素可以混合，最终取并集。 |
+| `cpu_cores` | 数字或数字字符串表示单个核心；`"0-6"` 表示范围；`"all"` 表示当前在线的全部核心；`"e-core"`、`"p-core"`、`"hp-core"` 表示自动识别的核心组；数组元素可以混合，最终取并集。 |
 | `sample_interval_ms` | 采样间隔，范围为 50 到 60000 毫秒。 |
 | `mode` | 可选，`scan`、`single` 或 `event_driven`；省略时默认为 `scan`。 |
 
-核心类别通过 sysfs 自动识别：优先使用每个 CPU 的 `cpu_capacity`，缺失时使用 `cpuinfo_max_freq`。最低 capacity 组是 `e-core`，最高组是 `hp-core`，中间组是 `p-core`；只有两组的设备没有 `p-core`。如果设备没有可读取的拓扑数据，使用类别别名会报错，数字和范围仍可使用。
+核心类别通过 sysfs 自动识别：优先使用每个 CPU 的 `cpu_capacity`，缺失时使用 `cpuinfo_max_freq`。`all` 直接选择当前在线的全部核心，不需要大小核拓扑数据。最低 capacity 组是 `e-core`，最高组是 `hp-core`，中间组是 `p-core`；只有两组的设备没有 `p-core`。如果设备没有可读取的拓扑数据，使用类别别名会报错，`all`、数字和范围仍可使用。
 
 ### 模式
 

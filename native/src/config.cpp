@@ -46,6 +46,10 @@ CpuSelector ParseSelector(const json& value) {
     }
 
     const std::string text = Trim(value.get<std::string>());
+    if (text == "all") {
+        selector.kind = CpuSelectorKind::kAll;
+        return selector;
+    }
     if (text == "e-core" || text == "p-core" || text == "hp-core") {
         selector.kind = CpuSelectorKind::kGroup;
         selector.group = text;

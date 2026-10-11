@@ -17,6 +17,7 @@ enum class CpuSelectorKind {
     kCpu,
     kRange,
     kGroup,
+    kAll,
 };
 
 struct CpuSelector {

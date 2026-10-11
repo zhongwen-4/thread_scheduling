@@ -108,6 +108,10 @@ bool CoreTopology::Resolve(const std::vector<CpuSelector>& selectors,
     std::vector<int> efficiency, middle, performance;
     bool groups_loaded = false;
     for (const CpuSelector& selector : selectors) {
+        if (selector.kind == CpuSelectorKind::kAll) {
+            cpus->insert(cpus->end(), present.begin(), present.end());
+            continue;
+        }
         if (selector.kind == CpuSelectorKind::kGroup) {
             if (!groups_loaded) {
                 if (!DetectGroups(present, &efficiency, &middle, &performance, error)) return false;

@@ -23,7 +23,7 @@ Add the shared Magisk/KernelSU/APatch module wrapper (`module.prop`, `service.sh
 
 Done:
 - Top-level package keyed JSON rules with English keys.
-- CPU selector parsing for ranges, numeric IDs, numeric strings, and e-core/p-core/hp-core combinations.
+- CPU selector parsing for `all`, ranges, numeric IDs, numeric strings, and e-core/p-core/hp-core combinations.
 - Optional mode with `scan` default.
 - Restored CMake target and included topology/event sources.
 - Android arm64-v8a build completed with NDK 27.0.12077973.
@@ -34,6 +34,7 @@ Current:
 ## Verification
 
 - `applist.json` parses with the requested shape.
+- `all` resolves through the online CPU set path and can be combined with other selectors.
 - Android CMake/Ninja build succeeds for `threadschedd`.
 - `git diff --check` passes.
 
